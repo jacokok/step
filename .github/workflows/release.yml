@@ -1,0 +1,179 @@
+name: Release step
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, matching Cargo.toml (without v)'
+        required: true
+        default: '0.1.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Validate version and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+      - name: Validate release version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Use a stable version such as 0.1.0, without a v prefix.' >&2
+            exit 1
+          fi
+          package_version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "step") | .version')
+          if [[ "$RELEASE_VERSION" != "$package_version" ]]; then
+            echo "Requested $RELEASE_VERSION, but Cargo.toml contains $package_version. Update Cargo.toml and Cargo.lock first." >&2
+            exit 1
+          fi
+          tag="v$RELEASE_VERSION"
+          existing_tag=$(git ls-remote --tags origin "refs/tags/$tag")
+          if [[ -n "$existing_tag" ]]; then
+            echo "Tag $tag already exists; releases are not overwritten." >&2
+            exit 1
+          fi
+          printf 'version=%s\ntag=%s\nsha=%s\n' "$RELEASE_VERSION" "$tag" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Install FFmpeg for audio integration tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Formatting and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Fetch pinned test models
+        run: cargo run --locked -- models --small --dir models
+      - name: Run all tests, including CLI failure/resume tests
+        run: cargo test --locked -- --include-ignored
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            extension: tar.gz
+            binary: step
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            extension: tar.gz
+            binary: step
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            extension: tar.gz
+            binary: step
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            extension: tar.gz
+            binary: step
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            extension: zip
+            binary: step.exe
+    env:
+      STEP_VERSION: ${{ needs.check.outputs.version }}
+      RUST_TARGET: ${{ matrix.target }}
+      BINARY_NAME: ${{ matrix.binary }}
+      ARCHIVE_EXTENSION: ${{ matrix.extension }}
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+      - name: Install Linux static-linking tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          printf 'CC=musl-gcc\n' >> "$GITHUB_ENV"
+      - name: Configure static Windows runtime
+        if: runner.os == 'Windows'
+        run: printf 'RUSTFLAGS=-C target-feature=+crt-static\n' >> "$GITHUB_ENV"
+      - name: Install Rust target
+        run: rustup target add "$RUST_TARGET"
+      - name: Build release binary
+        run: cargo build --release --locked --target "$RUST_TARGET" --bin step
+      - name: Smoke-test binary and stage archive contents
+        run: |
+          set -euo pipefail
+          binary="target/$RUST_TARGET/release/$BINARY_NAME"
+          test "$("$binary" --version)" = "step $STEP_VERSION"
+          "$binary" mix --help
+          mkdir -p package dist
+          cp "$binary" README.md LICENSE package/
+      - name: Package Unix archive
+        if: runner.os != 'Windows'
+        run: tar -czf "dist/step-v$STEP_VERSION-$RUST_TARGET.$ARCHIVE_EXTENSION" -C package step README.md LICENSE
+      - name: Package Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path package/step.exe, package/README.md, package/LICENSE -DestinationPath "dist/step-v$env:STEP_VERSION-$env:RUST_TARGET.$env:ARCHIVE_EXTENSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: step-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_VERSION: ${{ needs.check.outputs.version }}
+      RELEASE_TAG: ${{ needs.check.outputs.tag }}
+      RELEASE_SHA: ${{ needs.check.outputs.sha }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: step-*
+          path: dist
+          merge-multiple: true
+      - name: Generate and verify SHA-256 checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 5
+          sha256sum step-*.tar.gz step-*.zip > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Publish all archives and checksums
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" dist/* \
+            --target "$RELEASE_SHA" \
+            --title "step $RELEASE_VERSION" \
+            --notes 'Install with mise use -g github:jacokok/step. Requires yt-dlp and FFmpeg on PATH. Run step models once before mixing. See the README for usage.' \
+            --latest

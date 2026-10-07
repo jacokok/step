@@ -11,6 +11,14 @@ pub const MEL_HASH: &str = "fdd59e65c515331308e4c8841edf99972deca646bdf6197744c2
 pub const SMALL_HASH: &str = "a5f8d39d989f31859454ba27afe61c5317ca95e4d9373e6853e5361b8937172f";
 pub const FULL_HASH: &str = "5f810debe53459b559127fb55bbad40035bb47cc567b20e501670f968c770f02";
 
+/// Shared across working directories for an installed CLI. Explicit --dir/
+/// --model-dir (or STEP_MODEL_DIR) always takes precedence over this default.
+pub fn default_dir() -> PathBuf {
+    directories::ProjectDirs::from("", "", "step")
+        .map(|dirs| dirs.cache_dir().join("models"))
+        .unwrap_or_else(|| PathBuf::from("models"))
+}
+
 pub fn paths(dir: &Path, small: bool) -> (PathBuf, PathBuf) {
     (
         dir.join("mel_spectrogram.onnx"),
@@ -30,7 +38,7 @@ pub fn verify(dir: &Path, small: bool) -> Result<String> {
     ] {
         let actual = hash_file(path).with_context(|| {
             format!(
-                "Model missing: {}. Run `playlist-mix models --dir '{}' {}` first",
+                "Model missing: {}. Run `step models --dir '{}' {}` first",
                 path.display(),
                 dir.display(),
                 if small { "--small" } else { "" }
@@ -38,7 +46,7 @@ pub fn verify(dir: &Path, small: bool) -> Result<String> {
         })?;
         ensure!(
             actual == expected,
-            "Model checksum mismatch: {}. Remove it and rerun `playlist-mix models`; refusing unpinned weights",
+            "Model checksum mismatch: {}. Remove it and rerun `step models`; refusing unpinned weights",
             path.display()
         );
     }

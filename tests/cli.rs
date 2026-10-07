@@ -2,17 +2,17 @@
 //! Fetch small models first, then: cargo test --locked --test cli -- --ignored
 #[cfg(unix)]
 #[test]
-#[ignore = "requires checksum-pinned small models and FFmpeg; see README"]
+#[ignore = "requires checksum-pinned small models and FFmpeg; see RELEASING.md"]
 fn cli_download_failure_resume_dry_run_render_and_output_reuse() {
-    use playlist_mix::{manifest::Manifest, models};
     use std::{
         fs,
         os::unix::fs::PermissionsExt,
         path::PathBuf,
         process::{Command, Output},
     };
+    use step::{manifest::Manifest, models};
     let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let model_dir = std::env::var_os("PLAYLIST_MIX_TEST_MODEL_DIR")
+    let model_dir = std::env::var_os("STEP_TEST_MODEL_DIR")
         .map(PathBuf::from)
         .unwrap_or(project.join("models"));
     models::verify(&model_dir, true).expect("run `cargo run -- models --small` first");
@@ -87,7 +87,7 @@ cp "$SOURCE_MP3" "$output"
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let path = std::env::join_paths(paths).unwrap();
     let invoke = |dry: bool, fail: bool| -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_playlist-mix"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_step"));
         command
             .current_dir(dir.path())
             .args([

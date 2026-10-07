@@ -1,10 +1,10 @@
-use playlist_mix::{
+use std::{fs, process::Command};
+use step::{
     SAMPLE_RATE,
     manifest::Track,
     process::Tools,
     render::{self, Format},
 };
-use std::{fs, process::Command};
 
 #[test]
 fn encoder_failure_does_not_replace_existing_output() {

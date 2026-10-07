@@ -23,8 +23,8 @@ pub struct MixArgs {
     /// State, downloads and PCM cache. Default: <output-stem>.work beside output.
     #[arg(long)]
     pub work_dir: Option<PathBuf>,
-    /// Directory containing checksum-pinned ONNX model files.
-    #[arg(long, default_value = "models")]
+    /// Directory containing pinned ONNX models. Default: user cache directory.
+    #[arg(long, env = "STEP_MODEL_DIR", default_value_os_t = models::default_dir())]
     pub model_dir: PathBuf,
     /// Use the smaller, less accurate model.
     #[arg(long)]

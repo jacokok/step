@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
-use playlist_mix::{
+use std::path::PathBuf;
+use step::{
     models,
     pipeline::{self, MixArgs},
     process::Tools,
 };
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -19,7 +19,7 @@ struct Cli {
 enum Action {
     /// Fetch and SHA-256-verify prebuilt models; no Python needed.
     Models {
-        #[arg(long, default_value = "models")]
+        #[arg(long, env = "STEP_MODEL_DIR", default_value_os_t = models::default_dir())]
         dir: PathBuf,
         #[arg(long)]
         small: bool,

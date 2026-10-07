@@ -1,67 +1,49 @@
-# playlist-mix
+# step
 
-Download a YouTube Music playlist with **yt-dlp** and turn it into one high-quality
-MP3 mix. Rust handles beat detection; FFmpeg handles audio processing. No Python
-setup is needed for the Rust tool or analyzer.
+Turn a YouTube Music playlist into one beat-aligned MP3 mix. Downloads use yt-dlp;
+beat detection runs in Rust; FFmpeg handles mixing. Tempo, pitch and speed stay unchanged.
 
-## Setup
+## Environment
 
-On macOS, run these commands from this folder:
+You need [mise](https://mise.jdx.dev/getting-started.html) installed and activated in
+your shell, plus yt-dlp and FFmpeg (including FFprobe). On macOS:
 
 ```sh
 brew install mise yt-dlp ffmpeg
-mise trust
-mise install rust
-mise run build
-./target/release/playlist-mix models
 ```
 
-The last command downloads and verifies the beat-analysis models (~83 MB).
-Rust and Cargo dependencies are pinned. yt-dlp, FFmpeg and FFprobe must be on `PATH`.
+## Install
+
+Install the prebuilt CLI from [GitHub Releases](https://github.com/jacokok/step/releases)
+using mise's GitHub backend. No Rust or Python project setup is required.
+
+```sh
+mise use -g github:jacokok/step
+step models
+```
+
+`step models` downloads and verifies the analysis models once (~83 MB), storing them
+in your user cache directory so they are available from any folder. Release binaries
+are provided for macOS and Linux (Apple Silicon/ARM64 and x86-64), and Windows x86-64.
 
 ## Run
 
-Paste your actual playlist URL when prompted:
+Paste your playlist URL when prompted:
 
 ```sh
 printf 'Playlist URL: '
 IFS= read -r PLAYLIST_URL
-./target/release/playlist-mix mix "$PLAYLIST_URL"
+step mix "$PLAYLIST_URL"
 ```
 
-No output argument or format flag is needed:
+Your mix is saved to **`out/mix.mp3`**. Ordered downloads, analysis, transitions and
+resume state live in **`out/mix.work/`**. Rerun the same command to resume without
+re-downloading or re-analyzing unchanged tracks. Use a new work directory for another
+playlist; `step mix --help` lists the options.
 
-- **Mix:** `out/mix.mp3` (48 kHz, libmp3lame VBR quality 0).
-- **Downloads:** `out/mix.work/tracks/`, with playlist-index filenames.
-- **Analysis and transitions:** `out/mix.work/manifest.json`.
-- **Resume state and PCM cache:** `out/mix.work/` (~23 MB per minute of PCM).
+Transitions use a one-second equal-power crossfade and may trim intros/tails. Beat
+detection is an estimate: different BPMs still drift during the overlap. Missing
+tracks or unsuitable transitions stop the run rather than being silently skipped.
 
-Rerun the same command to resume. Unchanged downloads, analysis and completed mixes
-are reused. Each work directory keeps its original playlist snapshot; use a new
-work directory for a different playlist. Existing output is protected unless you
-explicitly request replacement. Run `./target/release/playlist-mix mix --help` for
-additional options.
-
-Tracks stay in playlist order. Transitions align detected beats using a default
-one-second equal-power crossfade and may trim intros/tails. Tempo, pitch and speed
-never change. Beat detection is an estimate; different BPMs still drift during the
-overlap. If no suitable transition exists, the tool stops rather than fading
-unaligned audio. The final mix is encoded once.
-
-## Troubleshooting
-
-- **Missing tools/models:** rerun setup and check that executables are on `PATH`.
-- **YouTube access errors:** update yt-dlp and follow its access/challenge errors;
-  authenticated playlists may need a cookies file. Failed tracks are never skipped.
-- **No suitable beats:** review the manifest and the CLI's transition options.
-- **Existing output or different playlist:** choose another output/work directory
-  using the options listed in help.
-
-Only download audio you have permission to use.
-
-## Tests
-
-```sh
-mise run test
-mise run lint
-```
+For YouTube access errors, update yt-dlp and follow its instructions; authenticated
+playlists may need cookies. Only download audio you have permission to use.

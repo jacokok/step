@@ -1,6 +1,6 @@
 use clap::Parser;
-use playlist_mix::{pipeline::MixArgs, render::Format};
 use std::path::{Path, PathBuf};
+use step::{pipeline::MixArgs, render::Format};
 
 #[derive(Parser)]
 struct Arguments {
@@ -9,10 +9,7 @@ struct Arguments {
 }
 
 fn parse(extra: &[&str]) -> MixArgs {
-    let mut args = vec![
-        "playlist-mix",
-        "https://music.youtube.com/playlist?list=provided",
-    ];
+    let mut args = vec!["step", "https://music.youtube.com/playlist?list=provided"];
     args.extend_from_slice(extra);
     Arguments::try_parse_from(args).unwrap().mix
 }
@@ -53,5 +50,5 @@ fn explicit_format_changes_default_extension_and_keeps_custom_paths() {
 
 #[test]
 fn playlist_url_remains_required() {
-    assert!(Arguments::try_parse_from(["playlist-mix"]).is_err());
+    assert!(Arguments::try_parse_from(["step"]).is_err());
 }

@@ -1,4 +1,6 @@
-use playlist_mix::{
+use serde_json::json;
+use std::{fs, path::Path, process::Command};
+use step::{
     SAMPLE_RATE, analysis,
     manifest::{Analysis, Beat, Manifest, Track, hash_file},
     models, playlist,
@@ -6,8 +8,6 @@ use playlist_mix::{
     render::{self, Format},
     transition::{self, Options, Override, Overrides},
 };
-use serde_json::json;
-use std::{fs, path::Path, process::Command};
 
 fn track(index: u32, duration: f64, times: &[f64]) -> Track {
     let mut track = Track::new(
@@ -238,10 +238,7 @@ fn missing_dependencies_and_models_have_actionable_errors() {
     let error = check_tool(&"/definitely/missing/ffmpeg".into(), "-version", "FFmpeg").unwrap_err();
     assert!(format!("{error:#}").contains("Install FFmpeg"));
     let dir = tempfile::tempdir().unwrap();
-    assert!(
-        format!("{:#}", models::verify(dir.path(), true).unwrap_err())
-            .contains("playlist-mix models")
-    );
+    assert!(format!("{:#}", models::verify(dir.path(), true).unwrap_err()).contains("step models"));
 }
 
 #[test]
