@@ -28,11 +28,7 @@ are provided for macOS and Linux (Apple Silicon/ARM64 and x86-64), and Windows x
 
 ## Run
 
-Paste your playlist URL when prompted:
-
 ```sh
-printf 'Playlist URL: '
-IFS= read -r PLAYLIST_URL
 step mix "$PLAYLIST_URL"
 ```
 
