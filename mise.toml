@@ -1,0 +1,21 @@
+[tools]
+rust = "1.99.0"
+
+[tasks.build]
+description = "Build the release CLI with locked dependencies"
+run = "cargo build --release --locked"
+
+[tasks.test]
+description = "Run offline unit and FFmpeg integration tests"
+run = "cargo test --locked"
+
+[tasks.lint]
+run = "cargo clippy --locked --all-targets -- -D warnings"
+
+[tasks.models]
+description = "Download and verify full-quality beat models"
+run = "cargo run --locked --release -- models"
+
+[tasks.synthetic]
+description = "Generate deterministic offline audio fixtures"
+run = "cargo run --locked --example synthetic"

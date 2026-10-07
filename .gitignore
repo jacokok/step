@@ -1,0 +1,7 @@
+/target/
+/models/
+/out/
+/*.work/
+/examples/generated/
+*.partial
+.DS_Store
