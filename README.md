@@ -5,10 +5,10 @@ beat detection runs in Rust; FFmpeg handles mixing. Tempo, pitch and speed stay 
 
 ## Environment
 
-You need [mise](https://mise.jdx.dev/getting-started.html) installed and activated in
-your shell, plus yt-dlp and FFmpeg (including FFprobe). On macOS:
+You need `yt-dlp` and `FFmpeg` (including FFprobe).
 
 ```sh
+# macOS
 brew install mise yt-dlp ffmpeg
 ```
 
@@ -20,11 +20,11 @@ using mise's GitHub backend. No Rust or Python project setup is required.
 ```sh
 mise use -g github:jacokok/step
 step models
+step mix "PLAYLIST_URL"
 ```
 
 `step models` downloads and verifies the analysis models once (~83 MB), storing them
-in your user cache directory so they are available from any folder. Release binaries
-are provided for macOS and Linux (Apple Silicon/ARM64 and x86-64), and Windows x86-64.
+in your user cache directory so they are available from any folder.
 
 ## Run
 
