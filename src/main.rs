@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use step::{
     cut::{self, CutArgs},
+    editor::{self, EditArgs},
     models,
     pipeline::{self, AllArgs, BeatArgs, GetArgs, MixArgs, Stage},
     process::Tools,
@@ -29,6 +30,8 @@ enum Action {
     Get(GetArgs),
     /// Trim leading and trailing silence, keeping backups of originals.
     Cut(CutArgs),
+    /// Open a keyboard-controlled waveform editor on a local browser server.
+    Edit(EditArgs),
     /// Analyze beats in downloaded or locally supplied tracks.
     Beat(BeatArgs),
     /// Mix previously analyzed tracks without downloading or detecting beats.
@@ -53,6 +56,7 @@ fn main() {
             Action::Models { dir, small } => models::install(&dir, small),
             Action::Get(args) => pipeline::get(args, &Tools::default()),
             Action::Cut(args) => cut::run(args, &Tools::default()),
+            Action::Edit(args) => editor::run(args, &Tools::default()),
             Action::Beat(args) => pipeline::beat(args, &Tools::default()),
             Action::Mix(args) => pipeline::run_stage(args, &Tools::default(), Stage::Mix),
             Action::All(mut args) => {

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>step — Track editor</title>
+<style>
+:root{color-scheme:dark;font:14px system-ui;background:#10141b;color:#dce4ee}*{box-sizing:border-box}body{max-width:1060px;margin:clamp(24px,7vh,80px) auto;padding:0 24px}h1{font-size:24px;font-weight:600;letter-spacing:-.6px;margin:0 0 6px}.subtitle{color:#8490a2;margin:0 0 28px;font-size:13px}button,select{font:inherit;color:inherit;border:1px solid transparent;border-radius:12px;background:transparent}button{cursor:pointer;transition:background .15s,color .15s}button:hover{background:#283240;color:#fff}button:disabled{opacity:.3;cursor:default}:focus-visible{outline:2px solid #85d6bd;outline-offset:4px}svg.icon{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.icon-button{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;flex-shrink:0}.track-row{display:flex;gap:8px;align-items:center;margin-bottom:18px}select{flex:1;min-width:0;padding:12px 16px;background:#1b2330;border-color:#2a3442;cursor:pointer}.editor{border:1px solid #2a3442;border-radius:20px;background:#171e28;overflow:hidden;box-shadow:0 16px 60px #0002}.wave-header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px 8px;gap:12px}.wave-label{font-size:11px;color:#7f8da0;letter-spacing:.06em;text-transform:uppercase}.zoom-controls{display:flex;gap:2px}.wave-body{padding:0 12px}canvas{display:block;width:100%;height:300px;background:#19222e;border-radius:12px;cursor:crosshair;touch-action:none}.toolbar{display:flex;align-items:center;gap:8px;padding:14px 16px;flex-wrap:wrap}.toolbar-group{display:flex;align-items:center;gap:4px}.toolbar-actions{margin-left:auto}.divider{width:1px;height:22px;background:#303b4b;margin:0 8px}#togglePlay{background:#85d6bd;color:#12251e;width:42px;height:42px;border-radius:14px}#togglePlay:hover{background:#a0e7d0}#position{font-size:12px;color:#93a1b4;font-variant-numeric:tabular-nums;white-space:nowrap;margin:0 8px}#selectionInfo{color:#8290a3;font-size:11px;font-variant-numeric:tabular-nums}#remove{color:#eb929d}#remove:hover{background:#74323d55}#optionsButton[aria-expanded=true]{background:#283240}#options{position:fixed;inset:auto;margin:0;padding:8px;width:240px;background:#202936;color:#dce4ee;border:1px solid #354254;border-radius:16px;box-shadow:0 12px 40px #0007}#options::backdrop{background:transparent}.menu-item{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;text-align:left;border-radius:9px;font-size:12px}.menu-item .icon{width:17px;height:17px}.snap-option{cursor:pointer}.snap-option:hover{background:#283240}.snap-option input{margin-left:auto;accent-color:#85d6bd}.menu-note{font-size:10px;color:#8490a2;margin:2px 12px 10px}.shortcuts{font-size:10px;color:#6b7789;line-height:1.9;margin:18px 2px 12px}kbd{font:inherit;background:#1a222e;border-radius:4px;padding:2px 4px;color:#8793a5}#status{font-size:11px;color:#8b99ab;line-height:1.6;min-height:36px;white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 2px}.footer{display:block;font-size:10px;color:#647084;line-height:1.7;margin:18px 2px}audio[hidden],svg[hidden]{display:none}@media(max-width:600px){body{padding:0 12px}.wave-header{padding:8px 12px}canvas{height:240px}.toolbar{padding:10px;gap:6px}#position{font-size:10px;margin:0 4px}#selectionInfo{width:100%;order:3;padding:0 4px}.divider{margin:0 4px}.icon-button{width:34px;height:34px}}
+.wave-body{position:relative}#deleteProgress{position:absolute;inset:0 12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;border-radius:12px;background:#10141bd9;backdrop-filter:blur(2px);color:#dce4ee;font-size:13px;cursor:wait}#deleteProgress[hidden]{display:none}#deleteProgress .icon{width:28px;height:28px;color:#85d6bd}.spinner{animation:spin 1s linear infinite}#remove[aria-busy=true]{opacity:1;cursor:wait}#status[data-error=true]{color:#eb929d}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
+</style>
+<!-- Locally embedded Lucide-style SVGs: no CDN, fonts or icon runtime required. -->
+<svg hidden aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="icon-play" viewBox="0 0 24 24"><path d="m9 5 12 7-12 7V5Z"/></symbol>
+<symbol id="icon-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="icon-previous" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="icon-next" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="icon-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3M8 11h6m-3-3v6"/></symbol>
+<symbol id="icon-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3M8 11h6"/></symbol>
+<symbol id="icon-overview" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></symbol>
+<symbol id="icon-start" viewBox="0 0 24 24"><path d="M8 4H4v16h4m12-8H10m4-4-4 4 4 4"/></symbol>
+<symbol id="icon-end" viewBox="0 0 24 24"><path d="M16 4h4v16h-4M4 12h10m-4-4 4 4-4 4"/></symbol>
+<symbol id="icon-options" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3m18 8H12m-4 0H3m18 8h-3m-4 0H3M14 2v4M8 10v4m10 4v4"/></symbol>
+<symbol id="icon-loader" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1-7.07 2.93"/></symbol>
+<symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14H6L5 6m4 0V3h6v3m-5 4v6m4-6v6"/></symbol>
+<symbol id="icon-preview" viewBox="0 0 24 24"><path d="M4 4v16M20 4v16m-11-5 6-3-6-3v6Z"/></symbol>
+<symbol id="icon-snap" viewBox="0 0 24 24"><path d="M6 3v9a6 6 0 0 0 12 0V3h-4v9a2 2 0 0 1-4 0V3H6Zm0 5h4m4 0h4"/></symbol>
+</defs></svg>
+<h1>Track editor</h1><p class="subtitle">Listen. Select. Cut. Your originals stay safe.</p>
+<div class="track-row"><button class="icon-button" id="previous" title="Previous track (P)" aria-label="Previous track"><svg class="icon" aria-hidden="true"><use href="#icon-previous"/></svg></button><select id="tracks" aria-label="Track"></select><button class="icon-button" id="next" title="Next track (N)" aria-label="Next track"><svg class="icon" aria-hidden="true"><use href="#icon-next"/></svg></button></div>
+<section class="editor" aria-label="Track editing">
+<div class="wave-header"><span class="wave-label">Waveform</span><div class="zoom-controls" role="group" aria-label="Waveform zoom">
+<button class="icon-button" id="zoomIn" title="Zoom in (+)" aria-label="Zoom in"><svg class="icon" aria-hidden="true"><use href="#icon-zoom-in"/></svg></button>
+<button class="icon-button" id="zoomOut" title="Zoom out (−)" aria-label="Zoom out"><svg class="icon" aria-hidden="true"><use href="#icon-zoom-out"/></svg></button>
+<button class="icon-button" id="overview" title="Show entire track" aria-label="Overview"><svg class="icon" aria-hidden="true"><use href="#icon-overview"/></svg></button>
+</div></div>
+<div class="wave-body"><canvas id="wave" tabindex="0" aria-label="Waveform. Drag to select or adjust boundaries. Arrow keys seek, I and O set cut boundaries."></canvas><div id="deleteProgress" hidden role="status" aria-live="polite"><svg class="icon spinner" aria-hidden="true"><use href="#icon-loader"/></svg><span id="deleteProgressText">Saving cut…</span></div></div>
+<audio id="audio" hidden preload="metadata"></audio>
+<div class="toolbar" role="group" aria-label="Playback and editing">
+<div class="toolbar-group"><button class="icon-button" id="togglePlay" title="Play (Space)" aria-label="Play"><svg class="icon" aria-hidden="true"><use id="playIcon" href="#icon-play"/></svg></button><span id="position">0:00 / 0:00</span></div>
+<span id="selectionInfo">No selection</span>
+<div class="toolbar-group toolbar-actions"><span class="divider" aria-hidden="true"></span>
+<button class="icon-button" id="markIn" title="Set selection start (I)" aria-label="Set selection start"><svg class="icon" aria-hidden="true"><use href="#icon-start"/></svg></button>
+<button class="icon-button" id="markOut" title="Set selection end (O)" aria-label="Set selection end"><svg class="icon" aria-hidden="true"><use href="#icon-end"/></svg></button>
+<button class="icon-button" id="preview" title="Play selection" aria-label="Play selection"><svg class="icon" aria-hidden="true"><use href="#icon-preview"/></svg></button>
+<button class="icon-button" id="optionsButton" popovertarget="options" title="Editing options" aria-label="Editing options" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-options"/></svg></button>
+<span class="divider" aria-hidden="true"></span>
+<button class="icon-button" id="remove" title="Select a section to remove" aria-label="Remove selection" aria-busy="false" disabled><svg class="icon" aria-hidden="true"><use id="removeIcon" href="#icon-trash"/></svg></button>
+</div></div></section>
+<div id="options" popover aria-label="Editing options">
+<label class="menu-item snap-option"><svg class="icon" aria-hidden="true"><use href="#icon-snap"/></svg>Snap to beats <input id="snap" type="checkbox" aria-label="Snap to beats" title="Snap to beats (S)"></label><p class="menu-note" id="beatStatus"></p>
+<button class="menu-item" id="cutStart" title="Select everything before the playhead"><svg class="icon" aria-hidden="true"><use href="#icon-start"/></svg>Select intro</button>
+<button class="menu-item" id="cutEnd" title="Select everything after the playhead"><svg class="icon" aria-hidden="true"><use href="#icon-end"/></svg>Select tail</button>
+</div>
+<p class="shortcuts"><kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> seek (Shift: 5s) · <kbd>Home</kbd>/<kbd>End</kbd> edges · <kbd>I</kbd>/<kbd>O</kbd> start/end · <kbd>S</kbd> snap · <kbd>N</kbd>/<kbd>P</kbd> tracks · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Delete</kbd> cut · <kbd>Esc</kbd> clear. Drag to select; drag a boundary to adjust; click to seek.</p>
+<p id="status" role="status" aria-live="polite">Loading tracks…</p>
+<small class="footer">MP3 cuts re-encode audio. Remaining beat markers shift with your edits; markers near a new join are estimates. Close the editor (Ctrl+C in the terminal) and run <code>step beat</code> before mixing.</small>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), audio=$('audio'), canvas=$('wave'), ctx=canvas.getContext('2d');
+let track=null, busy=false, deleting=false, viewStart=0, viewEnd=0, drag=null, previewEnd=null, generation=0, selectionStart=0, selectionEnd=0;
+const token='__TOKEN__';
+function status(text,error=false){$('status').textContent=text;$('status').dataset.error=String(error);}
+async function api(path,body){
+ const res=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json','X-Step-Token':token},body:JSON.stringify(body)}:{});
+ const data=await res.json(); if(!res.ok)throw Error(data.error||'Request failed'); return data;
+}
+function setBusy(value){busy=value||deleting;for(const el of document.querySelectorAll('button,select,input'))el.disabled=busy;document.querySelector('.editor').setAttribute('aria-busy',String(busy));if(!busy)updateSnap();updateDeleteState();}
+function deletionProblem(){
+ if(!track)return 'Wait for the track to load.';
+ const [start,end]=bounds();
+ if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>track.duration)return 'Select a section within the track.';
+ if(start>=end||Math.round(start*48000)>=Math.round(end*48000))return 'Select a non-empty section; start must be before end.';
+ if(Math.round(start*48000)===0&&Math.round(end*48000)===Math.round(track.duration*48000))return 'The entire track cannot be removed.';
+ return null;
+}
+function updateDeleteState(){
+ const problem=deletionProblem();$('remove').disabled=busy||!!problem;$('remove').title=deleting?'Saving cut…':problem||'Remove selection (Delete)';
+}
+function setDeleting(value){
+ deleting=value;$('deleteProgress').hidden=!value;$('remove').setAttribute('aria-busy',String(value));$('removeIcon').setAttribute('href',value?'#icon-loader':'#icon-trash');$('remove').querySelector('svg').classList.toggle('spinner',value);
+}
+function updateSnap(){const available=!!track?.beats.length; $('snap').disabled=busy||!available; if(!available)$('snap').checked=false; $('beatStatus').textContent=available?`${track.beats.length} detected beats`:'No current beats — run step beat';}
+function clamp(t){return Math.max(0,Math.min(track.duration,t));}
+function snapped(t){
+ t=clamp(t); if(!$('snap').checked||!track.beats.length||t===0||t===track.duration)return t;
+ // Include the track edges so intros/tails can always be selected.
+ let best=0; for(const b of [...track.beats,track.duration])if(Math.abs(b-t)<Math.abs(best-t))best=b;
+ return clamp(best);
+}
+function bounds(){return [selectionStart,selectionEnd];}
+function selection(a,b){selectionStart=a;selectionEnd=b;draw();}
+function marker(id){if(!track||busy)return; const t=snapped(audio.currentTime);selection(id==='start'?t:selectionStart,id==='end'?t:selectionEnd);}
+function formatTime(t){return `${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`;}
+function updateTransport(){
+ const label=audio.paused?'Play':'Pause';$('playIcon').setAttribute('href',audio.paused?'#icon-play':'#icon-pause');$('togglePlay').title=label+' (Space)';$('togglePlay').setAttribute('aria-label',label);
+ $('position').textContent=`${formatTime(audio.currentTime)} / ${formatTime(track?.duration||0)}`;
+ $('selectionInfo').textContent=selectionEnd>selectionStart?`${selectionStart.toFixed(2)} – ${selectionEnd.toFixed(2)}s`:'No selection';updateDeleteState();
+}
+function togglePlayback(){if(!track||busy)return;previewEnd=null;audio.paused?play():audio.pause();}
+function seek(t){if(!track||busy)return;previewEnd=null;audio.currentTime=clamp(t);if(audio.currentTime<viewStart||audio.currentTime>viewEnd){const span=viewEnd-viewStart;viewStart=Math.max(0,Math.min(track.duration-span,audio.currentTime-span/2));viewEnd=viewStart+span;}draw();}
+function draw(){
+ const w=canvas.clientWidth,h=canvas.clientHeight,dpr=window.devicePixelRatio||1;
+ if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}
+ updateTransport();ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);if(!track)return;
+ const span=viewEnd-viewStart, x=t=>(t-viewStart)/span*w;
+ const [a,b]=bounds();ctx.fillStyle='#74323d55';ctx.fillRect(x(a),0,x(b)-x(a),h);
+ ctx.strokeStyle='#85d6bd';ctx.beginPath();
+ for(let i=0;i<w;i++){
+  const lo=Math.floor((viewStart+i/w*span)/track.duration*track.peaks.length),hi=Math.min(track.peaks.length-1,Math.ceil((viewStart+(i+1)/w*span)/track.duration*track.peaks.length));
+  let peak=0;for(let j=lo;j<=hi;j++)peak=Math.max(peak,track.peaks[j]||0);
+  const height=Math.min(1,peak)*(h/2-24);ctx.moveTo(i,h/2-height);ctx.lineTo(i,h/2+height);
+ }ctx.stroke();
+ ctx.strokeStyle='#6d7d96';ctx.beginPath();for(const beat of track.beats){if(beat>=viewStart&&beat<=viewEnd){ctx.moveTo(x(beat),h-25);ctx.lineTo(x(beat),h);}}ctx.stroke();
+ for(const [t,color] of [[a,'#e69ba5'],[b,'#e69ba5'],[audio.currentTime,'#dce4ee']]){ctx.strokeStyle=color;ctx.beginPath();ctx.moveTo(x(t),0);ctx.lineTo(x(t),h);ctx.stroke();}
+ if(b>a){ctx.fillStyle='#e69ba5';for(const t of [a,b]){ctx.beginPath();ctx.roundRect(x(t)-3,h/2-12,6,24,3);ctx.fill();}}
+ ctx.fillStyle='#8190a5';ctx.font='11px system-ui';ctx.fillText(`${viewStart.toFixed(2)}s`,10,20);ctx.fillText(`${viewEnd.toFixed(2)}s`,Math.max(10,w-75),20);
+}
+function resetAudio(){audio.pause();audio.removeAttribute('src');audio.load();previewEnd=null;}
+function loadAudio(data){
+ return new Promise((resolve,reject)=>{
+  const finish=error=>{clearTimeout(timer);audio.removeEventListener('loadedmetadata',ready);audio.removeEventListener('error',failed);error?reject(error):resolve();};
+  const ready=()=>finish(), failed=()=>finish(Error('Unable to load edited audio. Try switching tracks.'));
+  const timer=setTimeout(()=>finish(Error('Audio loading timed out. Try switching tracks.')),30000);
+  audio.addEventListener('loadedmetadata',ready);audio.addEventListener('error',failed);
+  // Chromium can reuse media data even with Cache-Control: no-store. Each
+  // source revision must have its own URL, including after consecutive cuts.
+  audio.src='/audio/'+data.index+'?v='+encodeURIComponent(data.hash);audio.load();
+ });
+}
+async function load(){
+ const gen=++generation;resetAudio();previewEnd=null;drag=null;canvas.style.cursor='crosshair';track=null;setBusy(true);draw();status('Decoding waveform and playback…');
+ try{const data=await api('/api/track/'+$('tracks').value);if(gen!==generation)return false;track=data;viewStart=0;viewEnd=data.duration;selection(0,0);await loadAudio(data);if(gen!==generation)return false;status('Ready. Drag a section to remove, or seek and use I / O.');return true;}
+ catch(e){status(e.message);return false;}finally{if(gen===generation){setBusy(false);draw();}}
+}
+function switchTrack(delta){if(busy)return;const select=$('tracks');select.selectedIndex=Math.max(0,Math.min(select.options.length-1,select.selectedIndex+delta));load();}
+function zoom(factor){if(!track||busy)return;const span=Math.max(Math.min(1,track.duration),Math.min(track.duration,(viewEnd-viewStart)*factor));const center=(audio.currentTime>=viewStart&&audio.currentTime<=viewEnd)?audio.currentTime:(viewStart+viewEnd)/2;viewStart=Math.max(0,Math.min(track.duration-span,center-span/2));viewEnd=viewStart+span;draw();}
+async function play(){if(!track||busy)return;try{await audio.play();}catch(e){status('Playback failed: '+e.message);}}
+async function remove(){
+ if(busy||deleting)return;
+ const problem=deletionProblem();if(problem){status(problem,true);return;}
+ const [start,end]=bounds(), request={index:track.index,hash:track.hash,start,end};
+ setDeleting(true);setBusy(true);drag=null;canvas.style.cursor='wait';resetAudio();
+ if($('options').matches(':popover-open'))$('options').hidePopover();
+ $('deleteProgressText').textContent='Saving cut…';status('Encoding cut with FFmpeg…');
+ try{
+  const result=await api('/api/remove',request);
+  $('deleteProgressText').textContent='Updating waveform…';
+  if(await load()){status(result.message+'\nBackup: '+result.backup);canvas.focus();}
+  else status('Cut saved, but reloading the player failed.\n'+$('status').textContent,true);
+ }catch(e){
+  $('deleteProgressText').textContent='Restoring editor…';
+  const restored=await load();
+  if(restored&&track.hash===request.hash)selection(start,end);
+  status(e.message+(restored?'':'\n'+$('status').textContent),true);
+ }finally{setDeleting(false);setBusy(false);canvas.style.cursor='crosshair';draw();}
+}
+$('tracks').onchange=load;$('previous').onclick=()=>switchTrack(-1);$('next').onclick=()=>switchTrack(1);
+$('zoomIn').onclick=()=>zoom(.5);$('zoomOut').onclick=()=>zoom(2);$('overview').onclick=()=>{if(track){viewStart=0;viewEnd=track.duration;draw();}};
+$('markIn').onclick=()=>marker('start');$('markOut').onclick=()=>marker('end');
+$('cutStart').onclick=()=>{if(track)selection(0,snapped(audio.currentTime));};$('cutEnd').onclick=()=>{if(track)selection(snapped(audio.currentTime),track.duration);};
+$('preview').onclick=()=>{if(!track)return;const[a,b]=bounds();if(a>=0&&b>a&&b<=track.duration){seek(a);previewEnd=b;play();}else status('Select a valid section first.');};
+$('remove').onclick=remove;$('snap').onchange=draw;$('togglePlay').onclick=togglePlayback;
+function positionOptions(){const rect=$('optionsButton').getBoundingClientRect();$('options').style.right=Math.max(12,innerWidth-rect.right)+'px';$('options').style.bottom=Math.max(12,innerHeight-rect.top+8)+'px';}
+$('options').addEventListener('beforetoggle',e=>{if(e.newState==='open')positionOptions();});
+$('options').addEventListener('toggle',e=>$('optionsButton').setAttribute('aria-expanded',String(e.newState==='open')));
+function point(event){const rect=canvas.getBoundingClientRect();return clamp(viewStart+(event.clientX-rect.left)/rect.width*(viewEnd-viewStart));}
+function selectionBoundary(e){
+ if(!track||busy||selectionEnd<=selectionStart)return null;
+ const t=point(e), tolerance=(viewEnd-viewStart)*10/canvas.clientWidth;
+ return Math.abs(t-selectionStart)<=tolerance?'start':Math.abs(t-selectionEnd)<=tolerance?'end':null;
+}
+function updateCursor(e){canvas.style.cursor=(drag?drag.boundary:selectionBoundary(e))?'ew-resize':'crosshair';}
+canvas.onpointerdown=e=>{
+ if(!track||busy)return;canvas.focus();canvas.setPointerCapture(e.pointerId);
+ drag={time:snapped(point(e)),x:e.clientX,boundary:selectionBoundary(e)};updateCursor(e);
+};
+function dragSelection(e){const t=snapped(point(e));if(drag.boundary==='start')selection(Math.min(t,selectionEnd),selectionEnd);else if(drag.boundary==='end')selection(selectionStart,Math.max(t,selectionStart));else selection(Math.min(drag.time,t),Math.max(drag.time,t));}
+canvas.onpointermove=e=>{if(drag&&!busy&&Math.abs(e.clientX-drag.x)>=3)dragSelection(e);updateCursor(e);};
+canvas.onpointerup=e=>{if(!drag)return;if(!drag.boundary&&Math.abs(e.clientX-drag.x)<3)seek(drag.time);else dragSelection(e);drag=null;updateCursor(e);};
+canvas.onpointerleave=()=>{if(!drag)canvas.style.cursor='crosshair';};
+canvas.onpointercancel=()=>{drag=null;canvas.style.cursor='crosshair';};
+audio.ontimeupdate=()=>{if(previewEnd!==null&&audio.currentTime>=previewEnd){audio.pause();previewEnd=null;}draw();};
+audio.onplay=updateTransport;audio.onpause=updateTransport;
+window.addEventListener('resize',()=>{draw();if($('options').matches(':popover-open'))positionOptions();});
+function frame(){if(!audio.paused)draw();requestAnimationFrame(frame);}frame();
+document.addEventListener('keydown',e=>{
+ // Playback is page-wide: intercept Space before focused controls can scroll,
+ // open a dropdown, toggle snapping, or activate an editing button.
+ if(e.key===' '&&!e.ctrlKey&&!e.altKey&&!e.metaKey){e.preventDefault();if(!e.repeat)togglePlayback();return;}
+ if(e.key==='Escape'&&$('options').matches(':popover-open'))return;
+ if(busy||!track||e.ctrlKey||e.altKey||e.metaKey)return;
+ const key=e.key.toLowerCase(), target=e.target;
+ const editingText=target.isContentEditable||target.tagName==='TEXTAREA'||(target.tagName==='INPUT'&&!['checkbox','radio','button'].includes(target.type));
+ if(editingText)return;
+ // Delete belongs to the waveform selection even when a non-text control
+ // (the track selector, snapping checkbox or toolbar) still has focus.
+ if(key==='delete'||key==='backspace'){e.preventDefault();if(!e.repeat)remove();return;}
+ if(['INPUT','SELECT'].includes(target.tagName))return;
+ if(target.tagName==='AUDIO'&&['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+ if(['arrowleft','arrowright','home','end','i','o','s','n','p','delete','backspace','+','=','-','escape'].includes(key))e.preventDefault();else return;
+ if(key==='arrowleft'||key==='arrowright')seek(audio.currentTime+(key==='arrowleft'?-1:1)*(e.shiftKey?5:.1));
+ if(key==='home')seek(0);if(key==='end')seek(track.duration);
+ if(key==='i')marker('start');if(key==='o')marker('end');
+ if(key==='s'&&!$('snap').disabled){$('snap').checked=!$('snap').checked;draw();}
+ if(key==='n')switchTrack(1);if(key==='p')switchTrack(-1);
+ if(key==='+'||key==='=')zoom(.5);if(key==='-')zoom(2);if(key==='escape')selection(0,0);
+},{capture:true});
+(async()=>{try{const tracks=await api('/api/tracks');for(const t of tracks){const option=document.createElement('option');option.value=t.index;option.textContent=`${String(t.index).padStart(5,'0')} — ${t.title}`;$('tracks').append(option);}await load();}catch(e){status(e.message);}})();
+</script>
+</html>
