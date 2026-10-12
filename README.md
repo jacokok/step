@@ -85,13 +85,17 @@ Open the local URL printed in the terminal. Switch between tracks with the selec
 or **N/P**. A waveform and audio player let you listen and select cuts. Drag on the
 waveform, or seek and press **I/O** to mark the section to remove. **Select intro**
 and **Select tail** select everything before/after the playhead. **Delete** removes
-the selection after confirmation, joining the remaining audio with FFmpeg. Cutting
-the entire track is not allowed.
+the selection immediately, joining the remaining audio with FFmpeg; originals are
+backed up automatically. A processing indicator stays visible until the edited
+waveform and player are ready. Deletion also works while the track selector or
+snapping checkbox has focus. Empty selections and the entire track cannot be cut.
 
 **Space** plays/pauses; **Left/Right** seeks 0.1 seconds (**Shift**: 5 seconds);
 **Home/End** seeks to track edges; **+/−** zooms around the playhead; **Esc** clears
-the selection. Click the waveform to focus keyboard controls. Boundary time fields
-also support precise seconds. **Play selection** previews the section to remove.
+the selection. Click the waveform to focus keyboard controls. Drag the selection's
+boundary handles to refine a cut, zooming in for precision. The bottom icon toolbar
+provides play/pause, start/end markers, selection preview, options and deletion.
+The options menu contains beat snapping and intro/tail selection.
 
 Toggle beat snapping with **S** or the checkbox. Selection boundaries snap to
 previously detected beats (and track edges). Run `step beat` before opening the
