@@ -135,6 +135,131 @@ pub fn snapshot(
     )
 }
 
+/// Resolve a single item or playlist using yt-dlp's extractor URLs, not YouTube IDs.
+pub fn snapshot_input(tools: &Tools, input: &str, cookies: Option<&Path>) -> Result<Vec<Track>> {
+    let mut command = Command::new(&tools.yt_dlp);
+    command.args([
+        "--ignore-config",
+        "--flat-playlist",
+        "--dump-single-json",
+        "--yes-playlist",
+        "--abort-on-error",
+    ]);
+    if let Some(cookies) = cookies {
+        command.arg("--cookies").arg(cookies);
+    }
+    command.arg("--").arg(input);
+    let data = capture(&mut command, "media metadata download")?;
+    parse_input(
+        &serde_json::from_slice(&data).context("Invalid yt-dlp metadata JSON")?,
+        input,
+    )
+}
+
+pub fn parse_input(value: &Value, input: &str) -> Result<Vec<Track>> {
+    fn collect(value: &Value, input: &str, single: bool, tracks: &mut Vec<Track>) -> Result<()> {
+        ensure!(
+            !value.is_null(),
+            "Unavailable media entry; refusing to skip it"
+        );
+        ensure!(value.is_object(), "Invalid media metadata entry");
+        if value.get("entries").is_some()
+            || value
+                .get("_type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| matches!(kind, "playlist" | "multi_video"))
+        {
+            let entries = value
+                .get("entries")
+                .and_then(Value::as_array)
+                .context("Playlist metadata has no entries array; refusing to skip it")?;
+            for field in ["playlist_count", "n_entries"] {
+                if let Some(count) = value.get(field).and_then(Value::as_u64) {
+                    ensure!(
+                        count == entries.len() as u64,
+                        "Metadata reports {count} items but returned {}; refusing to omit unavailable entries",
+                        entries.len()
+                    );
+                }
+            }
+            let mut ordered: Vec<_> = entries.iter().enumerate().collect();
+            ordered.sort_by_key(|(position, entry)| {
+                entry
+                    .get("playlist_index")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(*position as u64 + 1)
+            });
+            for (_, entry) in ordered {
+                collect(entry, input, false, tracks)?;
+            }
+            return Ok(());
+        }
+        let fallback_id = crate::manifest::hash_bytes(
+            value
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or(input)
+                .as_bytes(),
+        );
+        let id = value
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .unwrap_or(&fallback_id);
+        let youtube = value
+            .get("ie_key")
+            .or_else(|| value.get("extractor_key"))
+            .and_then(Value::as_str)
+            .is_some_and(|v| v.eq_ignore_ascii_case("youtube"))
+            || input.contains("youtube.com/")
+            || input.contains("youtu.be/");
+        let explicit = ["webpage_url", "original_url"]
+            .into_iter()
+            .filter_map(|key| value.get(key).and_then(Value::as_str))
+            .find(|url| !url.is_empty());
+        let entry_url = value
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty());
+        let url = if let Some(url) = explicit {
+            url.to_owned()
+        } else if single {
+            input.to_owned()
+        } else if let Some(url) = entry_url.filter(|url| !youtube || *url != id) {
+            url.to_owned()
+        } else if youtube {
+            ensure!(
+                value
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty()),
+                "YouTube playlist entry has no video ID"
+            );
+            ensure!(
+                id.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+                "Invalid YouTube video ID"
+            );
+            format!("https://www.youtube.com/watch?v={id}")
+        } else {
+            bail!("Playlist entry {id:?} has no downloadable URL");
+        };
+        let title = value.get("title").and_then(Value::as_str).unwrap_or(id);
+        tracks.push(Track::new(
+            u32::try_from(tracks.len() + 1)?,
+            id.into(),
+            title.into(),
+            url,
+            PathBuf::new(),
+        ));
+        Ok(())
+    }
+    let mut tracks = Vec::new();
+    collect(value, input, true, &mut tracks)?;
+    ensure!(!tracks.is_empty(), "Input has no tracks");
+    Ok(tracks)
+}
+
 pub fn download(
     tools: &Tools,
     track: &Track,
@@ -143,7 +268,14 @@ pub fn download(
 ) -> Result<()> {
     let slot = staging.join(format!("{:05}", track.index));
     fs::create_dir_all(&slot)?;
-    let template = slot.join(format!("{:05}-{}.%(ext)s", track.index, track.id));
+    let template = slot.join(format!(
+        "{}.%(ext)s",
+        track
+            .path
+            .file_stem()
+            .context("Track path has no filename")?
+            .to_string_lossy()
+    ));
     let expected = slot.join(
         track
             .path
@@ -177,7 +309,7 @@ pub fn download(
     }
     command.arg("--").arg(&track.url);
     capture(&mut command, &format!("download of playlist index {} ({})", track.index, track.title))
-        .context("Fix YouTube access/network problems and retry with the same work directory; cookies can be supplied using --cookies FILE")?;
+        .context("Fix media access/network problems and retry with the same work directory; cookies can be supplied using --cookies FILE")?;
     ensure!(
         expected.is_file() && expected.metadata()?.len() > 0,
         "yt-dlp produced no MP3 for index {}; refusing to skip it",
@@ -209,6 +341,13 @@ pub fn download(
 }
 
 pub fn import_local(dir: &Path) -> Result<Vec<Track>> {
+    let mut tracks = scan_local(dir)?;
+    sort_tracks(&mut tracks)?;
+    Ok(tracks)
+}
+
+/// Like import_local, but permits an empty collection before the first download.
+pub fn scan_local(dir: &Path) -> Result<Vec<Track>> {
     let dir = fs::canonicalize(dir).context("Cannot open --local-tracks directory")?;
     let mut tracks = vec![];
     for entry in fs::read_dir(dir)? {
@@ -251,6 +390,8 @@ pub fn import_local(dir: &Path) -> Result<Vec<Track>> {
         track.downloaded = true;
         tracks.push(track);
     }
-    sort_tracks(&mut tracks)?;
+    if !tracks.is_empty() {
+        sort_tracks(&mut tracks)?;
+    }
     Ok(tracks)
 }

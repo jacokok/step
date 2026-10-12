@@ -91,7 +91,7 @@ cp "$SOURCE_MP3" "$output"
         command
             .current_dir(dir.path())
             .args([
-                "mix",
+                "all",
                 "https://music.youtube.com/playlist?list=TEST_SUPPLIED_AT_RUNTIME",
             ])
             .arg("--work-dir")
@@ -165,7 +165,7 @@ cp "$SOURCE_MP3" "$output"
             .unwrap(),
         output_hash
     );
-    let requests = fs::read_to_string(log).unwrap();
+    let requests = fs::read_to_string(&log).unwrap();
     assert_eq!(requests.lines().filter(|x| *x == "metadata").count(), 1);
     assert_eq!(
         requests
@@ -181,4 +181,145 @@ cp "$SOURCE_MP3" "$output"
             .count(),
         2
     ); // failed attempt + resume
+
+    // Standalone stages share state but never perform later stages implicitly.
+    let staged_work = dir.path().join("staged");
+    let staged_output = dir.path().join("staged.mp3");
+    let stage = |name: &str| -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_step"));
+        command
+            .current_dir(dir.path())
+            .arg(name)
+            .arg("--work-dir")
+            .arg(&staged_work)
+            .env("PATH", &path)
+            .env("SOURCE_MP3", &mp3)
+            .env("REQUEST_LOG", &log);
+        match name {
+            "get" => {
+                command
+                    .arg("https://music.youtube.com/playlist?list=STAGED")
+                    .env("STEP_MODEL_DIR", dir.path().join("missing-models"));
+            }
+            "beat" => {
+                command
+                    .arg("--model-dir")
+                    .arg(&model_dir)
+                    .arg("--small-model");
+            }
+            "mix" => {
+                command
+                    .arg(&staged_output)
+                    .arg("--overrides")
+                    .arg(&overrides)
+                    .env("STEP_MODEL_DIR", dir.path().join("missing-models"));
+            }
+            _ => unreachable!(),
+        }
+        command.output().unwrap()
+    };
+    let downloaded = stage("get");
+    assert!(
+        downloaded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&downloaded.stderr)
+    );
+    let staged_manifest = staged_work.join("manifest.json");
+    let saved = Manifest::load(&staged_manifest).unwrap();
+    assert!(
+        saved
+            .tracks
+            .iter()
+            .all(|t| t.downloaded && t.analysis.is_none() && t.pcm_path.is_none())
+    );
+    assert!(saved.transitions.is_empty());
+    assert!(!staged_output.exists());
+    assert!(!stage("mix").status.success());
+    // Remove YouTube transport entirely; neither beat nor mix should need it.
+    fs::remove_file(&fake).unwrap();
+    let analyzed = stage("beat");
+    assert!(
+        analyzed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&analyzed.stderr)
+    );
+    let saved = Manifest::load(&staged_manifest).unwrap();
+    assert!(saved.tracks.iter().all(|t| t.analysis.is_some()));
+    assert!(saved.transitions.is_empty());
+    assert!(!staged_work.join("filtergraph.txt").exists());
+    assert!(!staged_output.exists());
+    let first_analysis = serde_json::to_value(&saved.tracks[0].analysis).unwrap();
+
+    // Adding and externally editing audio requires a new beat pass.
+    let added = staged_work.join("tracks/00003-own.wav");
+    fs::copy(&wav_path, &added).unwrap();
+    let stale = stage("mix");
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("run step beat first"));
+    let analyzed = stage("beat");
+    assert!(
+        analyzed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&analyzed.stderr)
+    );
+    let saved = Manifest::load(&staged_manifest).unwrap();
+    assert_eq!(saved.tracks.len(), 3);
+    assert_eq!(
+        first_analysis,
+        serde_json::to_value(&saved.tracks[0].analysis).unwrap()
+    );
+    fs::copy(&mp3, &added).unwrap();
+    assert!(!stage("mix").status.success());
+    assert!(stage("beat").status.success());
+    fs::remove_file(&added).unwrap();
+    let mixed = stage("mix");
+    assert!(
+        mixed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&mixed.stderr)
+    );
+    assert!(staged_output.exists());
+    assert_eq!(Manifest::load(&staged_manifest).unwrap().tracks.len(), 2);
+    let reused = stage("mix");
+    assert!(reused.status.success());
+    assert!(String::from_utf8_lossy(&reused.stdout).contains("Unchanged mix already exists"));
+
+    // A fresh local-only session needs neither a URL nor a prior get manifest.
+    let local_work = dir.path().join("local-work");
+    let local_output = dir.path().join("local.mp3");
+    for name in ["beat", "mix"] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_step"));
+        command
+            .current_dir(dir.path())
+            .arg(name)
+            .arg("--work-dir")
+            .arg(&local_work)
+            .arg("--local-tracks")
+            .arg(staged_work.join("tracks"))
+            .env("PATH", &path);
+        if name == "beat" {
+            command
+                .arg("--model-dir")
+                .arg(&model_dir)
+                .arg("--small-model");
+        } else {
+            command
+                .arg(&local_output)
+                .arg("--overrides")
+                .arg(&overrides);
+        }
+        let result = command.output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    assert!(local_output.exists());
+    assert!(
+        Manifest::load(&local_work.join("manifest.json"))
+            .unwrap()
+            .playlist_url
+            .is_empty()
+    );
 }

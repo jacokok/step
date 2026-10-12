@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use step::{
+    cut::{self, CutArgs},
     models,
-    pipeline::{self, MixArgs},
+    pipeline::{self, AllArgs, BeatArgs, GetArgs, MixArgs, Stage},
     process::Tools,
 };
 
@@ -24,8 +25,16 @@ enum Action {
         #[arg(long)]
         small: bool,
     },
-    /// Download, analyze, plan, and optionally render a playlist mix.
+    /// Append audio from any yt-dlp-supported URL without analyzing or mixing.
+    Get(GetArgs),
+    /// Trim leading and trailing silence, keeping backups of originals.
+    Cut(CutArgs),
+    /// Analyze beats in downloaded or locally supplied tracks.
+    Beat(BeatArgs),
+    /// Mix previously analyzed tracks without downloading or detecting beats.
     Mix(MixArgs),
+    /// Download, analyze, plan, and optionally render a playlist mix.
+    All(AllArgs),
 }
 
 fn main() {
@@ -42,7 +51,17 @@ fn main() {
         .map_err(anyhow::Error::from)
         .and_then(|()| match Cli::parse().command {
             Action::Models { dir, small } => models::install(&dir, small),
-            Action::Mix(args) => pipeline::run(args, &Tools::default()),
+            Action::Get(args) => pipeline::get(args, &Tools::default()),
+            Action::Cut(args) => cut::run(args, &Tools::default()),
+            Action::Beat(args) => pipeline::beat(args, &Tools::default()),
+            Action::Mix(args) => pipeline::run_stage(args, &Tools::default(), Stage::Mix),
+            Action::All(mut args) => {
+                args.mix.playlist_url = args.playlist_url;
+                args.mix.model_dir = args.model_dir;
+                args.mix.small_model = args.small_model;
+                args.mix.cookies = args.cookies;
+                pipeline::run(args.mix, &Tools::default())
+            }
         });
     if let Err(error) = result {
         eprintln!("error: {error:#}");

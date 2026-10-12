@@ -35,5 +35,8 @@ fn installed_model_defaults_are_shared_across_working_directories() {
     let first_help = help(&first, "models");
     assert_eq!(first_help, help(&second, "models"));
     assert!(first_help.contains(default_dir.to_str().unwrap()));
-    assert!(help(&second, "mix").contains(default_dir.to_str().unwrap()));
+    for command in ["beat", "all"] {
+        assert!(help(&second, command).contains(default_dir.to_str().unwrap()));
+    }
+    assert!(!help(&second, "mix").contains("--model-dir"));
 }

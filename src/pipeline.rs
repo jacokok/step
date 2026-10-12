@@ -16,20 +16,18 @@ use std::{
 
 #[derive(Debug, Args)]
 pub struct MixArgs {
-    /// YouTube Music or YouTube playlist URL (quote it in your shell).
+    #[arg(skip)]
     pub playlist_url: String,
     /// Final output file. Default: out/mix.mp3.
     pub output: Option<PathBuf>,
     /// State, downloads and PCM cache. Default: <output-stem>.work beside output.
     #[arg(long)]
     pub work_dir: Option<PathBuf>,
-    /// Directory containing pinned ONNX models. Default: user cache directory.
-    #[arg(long, env = "STEP_MODEL_DIR", default_value_os_t = models::default_dir())]
+    #[arg(skip = models::default_dir())]
     pub model_dir: PathBuf,
-    /// Use the smaller, less accurate model.
-    #[arg(long)]
+    #[arg(skip)]
     pub small_model: bool,
-    /// Analyze and report; download/cache work is allowed, but no mix is created.
+    /// Plan and report without creating a mix.
     #[arg(long)]
     pub dry_run: bool,
     #[arg(long, default_value_t = 1.0)]
@@ -46,8 +44,7 @@ pub struct MixArgs {
     /// JSON map of adjacent index pairs to explicit beat timestamps.
     #[arg(long)]
     pub overrides: Option<PathBuf>,
-    /// Netscape-format yt-dlp cookies file, used for metadata and every track download.
-    #[arg(long)]
+    #[arg(skip)]
     pub cookies: Option<PathBuf>,
     /// Final encoding format (defaults to MP3, regardless of a supplied filename).
     #[arg(long, value_enum, default_value = "mp3")]
@@ -55,9 +52,209 @@ pub struct MixArgs {
     /// Replace an existing output after a successful encode.
     #[arg(long)]
     pub force: bool,
-    /// Offline import of index-prefixed MP3/WAV/FLAC files instead of YouTube downloads.
+    /// Index-prefixed MP3/WAV/FLAC files; defaults to <work-dir>/tracks.
     #[arg(long)]
     pub local_tracks: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct AllArgs {
+    /// YouTube Music or YouTube playlist URL (quote it in your shell).
+    pub playlist_url: String,
+    #[command(flatten)]
+    pub mix: MixArgs,
+    /// Directory containing pinned ONNX models. Default: user cache directory.
+    #[arg(long, env = "STEP_MODEL_DIR", default_value_os_t = models::default_dir())]
+    pub model_dir: PathBuf,
+    /// Use the smaller, less accurate model.
+    #[arg(long)]
+    pub small_model: bool,
+    /// Netscape-format yt-dlp cookies file, used for metadata and every download.
+    #[arg(long)]
+    pub cookies: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct GetArgs {
+    /// Any yt-dlp-supported media or playlist URL (quote it in your shell).
+    pub url: String,
+    /// State and downloads directory. Default: out/mix.work.
+    #[arg(long)]
+    pub work_dir: Option<PathBuf>,
+    /// Netscape-format yt-dlp cookies file.
+    #[arg(long)]
+    pub cookies: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct BeatArgs {
+    /// State and PCM cache directory. Default: out/mix.work.
+    #[arg(long)]
+    pub work_dir: Option<PathBuf>,
+    /// Index-prefixed MP3/WAV/FLAC files; defaults to <work-dir>/tracks.
+    #[arg(long)]
+    pub local_tracks: Option<PathBuf>,
+    #[arg(long, env = "STEP_MODEL_DIR", default_value_os_t = models::default_dir())]
+    pub model_dir: PathBuf,
+    #[arg(long)]
+    pub small_model: bool,
+}
+
+impl Default for MixArgs {
+    fn default() -> Self {
+        Self {
+            playlist_url: String::new(),
+            output: None,
+            work_dir: None,
+            model_dir: models::default_dir(),
+            small_model: false,
+            dry_run: false,
+            overlap: 1.0,
+            tail_window: 12.0,
+            intro_window: 12.0,
+            min_beat_score: 0.5,
+            overrides: None,
+            cookies: None,
+            format: Format::Mp3,
+            force: false,
+            local_tracks: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    Beat,
+    Mix,
+    All,
+}
+
+pub fn get(args: GetArgs, tools: &Tools) -> Result<()> {
+    ensure!(
+        !args.url.trim().is_empty(),
+        "Provide a media or playlist URL"
+    );
+    let versions = tools.check(false)?;
+    let work = absolute(
+        args.work_dir
+            .as_deref()
+            .unwrap_or(Path::new("out/mix.work")),
+    )?;
+    fs::create_dir_all(&work)?;
+    let work = fs::canonicalize(work)?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(work.join("workflow.lock"))?;
+    lock.try_lock().context("Work directory is locked by another run; wait for it to finish or use a different --work-dir")?;
+    let track_dir = work.join("tracks");
+    fs::create_dir_all(&track_dir)?;
+    let path = work.join("manifest.json");
+    let mut manifest = if path.exists() {
+        Manifest::load(&path)?
+    } else {
+        Manifest::new(args.url.clone(), "downloads".into(), Vec::new())
+    };
+    // Reserve indices of manually added tracks too, without replacing their audio.
+    for track in playlist::scan_local(&track_dir)? {
+        if let Some(old) = manifest.tracks.iter().find(|old| old.index == track.index) {
+            ensure!(
+                old.path == track.path,
+                "Track index {} is already reserved by {}; rename the local file to a free index",
+                track.index,
+                old.path.display()
+            );
+        } else {
+            manifest.tracks.push(track);
+            manifest.transitions.clear();
+        }
+    }
+    let mut inputs: std::collections::BTreeMap<String, Vec<u32>> = manifest
+        .config
+        .get("get_inputs")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .context("Invalid download input history")?
+        .unwrap_or_default();
+    let indices = if let Some(indices) = inputs.get(&args.url).filter(|indices| {
+        indices
+            .iter()
+            .all(|index| manifest.tracks.iter().any(|track| track.index == *index))
+    }) {
+        indices.clone()
+    } else {
+        println!("Resolving media URL...");
+        let incoming = playlist::snapshot_input(tools, &args.url, args.cookies.as_deref())?;
+        let mut indices = Vec::new();
+        let mut next = manifest.tracks.iter().map(|t| t.index).max().unwrap_or(0);
+        for mut track in incoming {
+            if let Some(existing) = manifest.tracks.iter().find(|t| t.url == track.url) {
+                indices.push(existing.index);
+                continue;
+            }
+            next = next.checked_add(1).context("Track index overflow")?;
+            track.index = next;
+            // IDs from arbitrary extractors may contain slashes or other unsafe characters.
+            let filename_key = hash_bytes(track.url.as_bytes());
+            track.path = track_dir.join(format!("{next:05}-{}.mp3", &filename_key[..16]));
+            manifest.tracks.push(track);
+            manifest.transitions.clear();
+            indices.push(next);
+        }
+        inputs.insert(args.url.clone(), indices.clone());
+        manifest
+            .config
+            .insert("get_inputs".into(), serde_json::to_value(inputs)?);
+        indices
+    };
+    playlist::sort_tracks(&mut manifest.tracks)?;
+    manifest.tools.extend(versions);
+    manifest.last_error = None;
+    manifest.save(&path)?;
+    let result = (|| -> Result<()> {
+        for index in indices {
+            let track = manifest.tracks.iter_mut().find(|t| t.index == index)
+                .with_context(|| format!("Download track {index} was removed from the collection; use a new URL or work directory"))?;
+            ensure!(
+                track.path.parent() == Some(track_dir.as_path()),
+                "Download track {index} is outside this work directory's tracks folder"
+            );
+            if track.downloaded && track.path.is_file() {
+                println!("Using downloaded {:05}: {}", track.index, track.title);
+                continue;
+            }
+            println!("Downloading {:05}: {}", track.index, track.title);
+            playlist::download(tools, track, &work.join("staging"), args.cookies.as_deref())?;
+            track.downloaded = true;
+            manifest.save(&path)?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = &result {
+        manifest.last_error = Some(format!("{error:#}"));
+        manifest.save(&path)?;
+    }
+    report(&manifest, &path);
+    result?;
+    println!("Download complete. Tracks: {}", track_dir.display());
+    Ok(())
+}
+
+pub fn beat(args: BeatArgs, tools: &Tools) -> Result<()> {
+    run_stage(
+        MixArgs {
+            work_dir: args.work_dir,
+            local_tracks: args.local_tracks,
+            model_dir: args.model_dir,
+            small_model: args.small_model,
+            ..MixArgs::default()
+        },
+        tools,
+        Stage::Beat,
+    )
 }
 
 impl MixArgs {
@@ -77,7 +274,14 @@ fn absolute(path: &Path) -> Result<PathBuf> {
 }
 
 pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
-    playlist::validate_url(&args.playlist_url)?;
+    run_stage(args, tools, Stage::All)
+}
+
+pub fn run_stage(mut args: MixArgs, tools: &Tools, stage: Stage) -> Result<()> {
+    let standalone = matches!(stage, Stage::Beat | Stage::Mix);
+    if !standalone {
+        playlist::validate_url(&args.playlist_url)?;
+    }
     let options = Options {
         overlap: args.overlap,
         tail_window: args.tail_window,
@@ -87,8 +291,12 @@ pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
     options.validate()?;
     let output_path = args.output_path();
     let format = Format::infer(&output_path, Some(args.format))?;
-    let versions = tools.check(args.local_tracks.is_some())?;
-    let stamp = models::verify(&args.model_dir, args.small_model)?;
+    let versions = tools.check(standalone || args.local_tracks.is_some())?;
+    let mut stamp = if matches!(stage, Stage::Beat | Stage::All) {
+        models::verify(&args.model_dir, args.small_model)?
+    } else {
+        String::new()
+    };
     let overrides: Overrides = match &args.overrides {
         Some(path) => serde_json::from_slice(&fs::read(path).with_context(|| format!("Cannot read overrides {}", path.display()))?)
             .context("Invalid overrides JSON; expected keys like 1->2 with outgoing_beat_seconds, incoming_beat_seconds, and optional overlap_seconds")?,
@@ -121,6 +329,9 @@ pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
     _lock.try_lock().context("Work directory is locked by another run; wait for it to finish or use a different --work-dir")?;
     let manifest_path = work.join("manifest.json");
     let track_dir = work.join("tracks");
+    if standalone && args.local_tracks.is_none() {
+        args.local_tracks = Some(track_dir.clone());
+    }
     let local = args
         .local_tracks
         .as_ref()
@@ -139,21 +350,37 @@ pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
         .unwrap_or("youtube".into());
     let mut manifest = if manifest_path.exists() {
         let mut value = Manifest::load(&manifest_path)?;
-        ensure!(
-            value.playlist_url == args.playlist_url && value.source == source,
-            "Work directory belongs to another playlist/source; use a new --work-dir"
-        );
+        if !standalone {
+            ensure!(
+                value.playlist_url == args.playlist_url && value.source == source,
+                "Work directory belongs to another playlist/source; use a new --work-dir"
+            );
+        }
         playlist::sort_tracks(&mut value.tracks)?;
         if let Some(dir) = &local {
             let current = playlist::import_local(dir)?;
-            ensure!(
-                current.len() == value.tracks.len()
-                    && current
-                        .iter()
-                        .zip(&value.tracks)
-                        .all(|(a, b)| a.index == b.index && a.path == b.path),
-                "Local track list changed; use a new work directory rather than silently adding/removing tracks"
-            );
+            if standalone {
+                value.tracks = current
+                    .into_iter()
+                    .map(|track| {
+                        value
+                            .tracks
+                            .iter()
+                            .find(|old| old.index == track.index && old.path == track.path)
+                            .cloned()
+                            .unwrap_or(track)
+                    })
+                    .collect();
+            } else {
+                ensure!(
+                    current.len() == value.tracks.len()
+                        && current
+                            .iter()
+                            .zip(&value.tracks)
+                            .all(|(a, b)| a.index == b.index && a.path == b.path),
+                    "Local track list changed; use a new work directory rather than silently adding/removing tracks"
+                );
+            }
         }
         value
     } else {
@@ -195,7 +422,16 @@ pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
     manifest
         .config
         .insert("overrides".into(), serde_json::to_value(&overrides)?);
-    manifest.config.insert("detector".into(), json!(stamp));
+    if stage == Stage::Mix {
+        stamp = manifest
+            .config
+            .get("detector")
+            .and_then(|v| v.as_str())
+            .context("No beat analysis found; run step beat first")?
+            .to_owned();
+    } else {
+        manifest.config.insert("detector".into(), json!(stamp));
+    }
     manifest
         .config
         .insert("sample_rate".into(), json!(SAMPLE_RATE));
@@ -221,6 +457,7 @@ pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
     let result = drive(
         &args,
         tools,
+        stage,
         &work,
         &output,
         format,
@@ -245,6 +482,7 @@ pub fn run(args: MixArgs, tools: &Tools) -> Result<()> {
 fn drive(
     args: &MixArgs,
     tools: &Tools,
+    stage: Stage,
     work: &Path,
     output: &Path,
     format: Format,
@@ -286,6 +524,11 @@ fn drive(
         if cached {
             println!("  using cached beat analysis");
         } else {
+            ensure!(
+                stage != Stage::Mix,
+                "Beat analysis missing or stale for track {}; run step beat first",
+                manifest.tracks[position].index
+            );
             if detector.is_none() {
                 detector = Some(analysis::load_detector(&args.model_dir, args.small_model)?);
             }
@@ -298,6 +541,11 @@ fn drive(
             )?;
             manifest.save(manifest_path)?;
         }
+    }
+    if stage == Stage::Beat {
+        report(manifest, manifest_path);
+        println!("Beat analysis complete.");
+        return Ok(());
     }
     let keys: Vec<String> = manifest
         .tracks

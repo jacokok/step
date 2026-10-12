@@ -1,17 +1,20 @@
 use clap::Parser;
 use std::path::{Path, PathBuf};
-use step::{pipeline::MixArgs, render::Format};
+use step::{
+    pipeline::{AllArgs, MixArgs},
+    render::Format,
+};
 
 #[derive(Parser)]
 struct Arguments {
     #[command(flatten)]
-    mix: MixArgs,
+    all: AllArgs,
 }
 
 fn parse(extra: &[&str]) -> MixArgs {
     let mut args = vec!["step", "https://music.youtube.com/playlist?list=provided"];
     args.extend_from_slice(extra);
-    Arguments::try_parse_from(args).unwrap().mix
+    Arguments::try_parse_from(args).unwrap().all.mix
 }
 
 #[test]
