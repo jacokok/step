@@ -227,7 +227,7 @@ fn edge_bounds(
     )))
 }
 
-fn backup_original(track: &Track, hash: &str, dir: &Path) -> Result<PathBuf> {
+pub(crate) fn backup_original(track: &Track, hash: &str, dir: &Path) -> Result<PathBuf> {
     fs::create_dir_all(dir)?;
     let ext = track
         .path
@@ -254,6 +254,43 @@ fn backup_original(track: &Track, hash: &str, dir: &Path) -> Result<PathBuf> {
 }
 
 fn replace_audio(tools: &Tools, track: &Track, start: u64, end: u64) -> Result<()> {
+    replace_ranges(tools, track, &[(start, end)])
+}
+
+/// Encode retained PCM ranges in order, then atomically replace the source.
+pub(crate) fn replace_ranges(tools: &Tools, track: &Track, ranges: &[(u64, u64)]) -> Result<()> {
+    let frames = track.frames.context("PCM frame count missing")?;
+    ensure!(!ranges.is_empty(), "Cannot remove the entire track");
+    let mut previous_end = 0;
+    for &(start, end) in ranges {
+        ensure!(
+            start >= previous_end && start < end && end <= frames,
+            "Invalid retained range"
+        );
+        previous_end = end;
+    }
+    let filter = if ranges.len() == 1 {
+        format!(
+            "[0:a]atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS[out]",
+            ranges[0].0, ranges[0].1
+        )
+    } else {
+        let mut filter = format!("[0:a]asplit={}", ranges.len());
+        for i in 0..ranges.len() {
+            filter.push_str(&format!("[s{i}]"));
+        }
+        filter.push(';');
+        for (i, &(start, end)) in ranges.iter().enumerate() {
+            filter.push_str(&format!(
+                "[s{i}]atrim=start_sample={start}:end_sample={end},asetpts=PTS-STARTPTS[r{i}];"
+            ));
+        }
+        for i in 0..ranges.len() {
+            filter.push_str(&format!("[r{i}]"));
+        }
+        filter.push_str(&format!("concat=n={}:v=0:a=1[out]", ranges.len()));
+        filter
+    };
     let ext = track
         .path
         .extension()
@@ -304,10 +341,9 @@ fn replace_audio(tools: &Tools, track: &Track, start: u64, end: u64) -> Result<(
                 "-i",
             ])
             .arg(track.pcm_path.as_deref().context("PCM missing")?)
-            .arg("-af")
-            .arg(format!(
-                "atrim=start_sample={start}:end_sample={end},asetpts=PTS-STARTPTS"
-            ))
+            .arg("-filter_complex")
+            .arg(&filter)
+            .args(["-map", "[out]"])
             .args(codec)
             .arg("-f")
             .arg(&ext)

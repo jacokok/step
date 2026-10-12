@@ -74,6 +74,40 @@ positive numeric index followed by a title (for example, `00003-my-song.wav`);
 indices determine mix order. Remove the original if replacing it with a different
 file format, to avoid duplicate indices. Run `step beat` after changes.
 
+### Interactive track cuts
+
+```sh
+step edit                              # Downloaded tracks
+step edit --local-tracks ./tracks --work-dir ./session
+```
+
+Open the local URL printed in the terminal. Switch between tracks with the selector
+or **N/P**. A waveform and audio player let you listen and select cuts. Drag on the
+waveform, or seek and press **I/O** to mark the section to remove. **Select intro**
+and **Select tail** select everything before/after the playhead. **Delete** removes
+the selection after confirmation, joining the remaining audio with FFmpeg. Cutting
+the entire track is not allowed.
+
+**Space** plays/pauses; **Left/Right** seeks 0.1 seconds (**Shift**: 5 seconds);
+**Home/End** seeks to track edges; **+/−** zooms around the playhead; **Esc** clears
+the selection. Click the waveform to focus keyboard controls. Boundary time fields
+also support precise seconds. **Play selection** previews the section to remove.
+
+Toggle beat snapping with **S** or the checkbox. Selection boundaries snap to
+previously detected beats (and track edges). Run `step beat` before opening the
+editor to enable snapping. Manual cuts preserve markers outside the removed section
+and shift them onto the edited timeline, keeping snapping enabled across cuts.
+Markers near a new join are estimates; run `step beat` afterward before mixing.
+External audio changes still discard stale markers. No beat models are required
+for editing or playback.
+The waveform is rendered locally in a canvas; no external scripts are loaded.
+
+Cuts retain filenames/order and use the same atomic replacement, original backups,
+and `manifest.json` history as `step cut`. MP3 cuts re-encode lossy audio; WAV/FLAC
+retain their formats. To undo, copy the recorded backup over the corresponding track.
+The editor holds the workflow lock: stop it with **Ctrl+C** in the terminal before
+running `step beat` and `step mix`. `--port` optionally sets the loopback server port.
+
 ### Trim silence
 
 ```sh

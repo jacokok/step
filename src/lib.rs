@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod cut;
+pub mod editor;
 pub mod manifest;
 pub mod models;
 pub mod pipeline;
